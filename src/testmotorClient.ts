@@ -110,6 +110,19 @@ const defaultFetch: TestmotorFetch = async (url) => {
     }
 };
 
+/**
+ * One string field of an entry, or null when there is nothing usable there.
+ *
+ * The entry is whatever was in the list, which is not necessarily an object: a list from the testmotor can carry a null, and has. Reaching into one of those for a field is the difference between dropping an unusable entry and failing the whole request.
+ */
+function stringField(entry: unknown, name: string): string | null {
+    if (typeof entry !== "object" || entry === null) {
+        return null;
+    }
+    const value = (entry as Record<string, unknown>)[name];
+    return typeof value === "string" && value !== "" ? value : null;
+}
+
 /** A short, quotable rendering of whatever came back with a failed request. */
 function describeBody(body: unknown): string {
     if (body === undefined || body === null || body === "") {
@@ -189,20 +202,30 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
         async fetchApps() {
             const body = (await getJson("/api/altinn-app")) as unknown[];
             // An entry missing either field cannot be used as a key or filed under a data type, so it is dropped rather than passed on as a half-identified app.
-            return body
-                .map((entry) => entry as { appId?: unknown; mainFormId?: unknown })
-                .filter((entry) => typeof entry.appId === "string" && entry.appId !== "" && typeof entry.mainFormId === "string" && entry.mainFormId !== "")
-                .map((entry) => ({ appId: entry.appId as string, mainFormId: entry.mainFormId as string }));
+            const apps: TestmotorApp[] = [];
+            for (const entry of body) {
+                const appId = stringField(entry, "appId");
+                const mainFormId = stringField(entry, "mainFormId");
+                if (appId !== null && mainFormId !== null) {
+                    apps.push({ appId, mainFormId });
+                }
+            }
+            return apps;
         },
 
         async fetchFormXml(appId: string) {
             // Deliberately not sorted. The share orders the files by a numeric prefix that has already been stripped by the time they arrive, so sorting the stems would put "Maksimumsversjon" ahead of "Minimumsversjon" by accident rather than by intent. The order they arrive in is the share's own, and the same order the testmotor's own interface offers.
             const body = (await getJson(`/api/xml/${encodeURIComponent(appId)}`)) as unknown[];
             // A file with no name cannot be labelled or selected, and one with no contents has nothing to convert, so neither is worth carrying further.
-            return body
-                .map((entry) => entry as { name?: unknown; contents?: unknown })
-                .filter((entry) => typeof entry.name === "string" && entry.name !== "" && typeof entry.contents === "string" && entry.contents !== "")
-                .map((entry) => ({ name: entry.name as string, contents: entry.contents as string }));
+            const files: TestmotorXmlFile[] = [];
+            for (const entry of body) {
+                const name = stringField(entry, "name");
+                const contents = stringField(entry, "contents");
+                if (name !== null && contents !== null) {
+                    files.push({ name, contents });
+                }
+            }
+            return files;
         },
 
         clearCache() {

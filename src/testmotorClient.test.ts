@@ -69,7 +69,9 @@ describe("fetchApps", () => {
                 { mainFormId: "NO-APP" },
                 { appId: "", mainFormId: "EMPTY" },
                 { appId: "blank-form-id", mainFormId: "" },
-                { appId: 7, mainFormId: "NUMBER" }
+                { appId: 7, mainFormId: "NUMBER" },
+                null,
+                "an app, apparently"
             ]
         });
         const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
@@ -112,7 +114,9 @@ describe("fetchFormXml", () => {
                 { name: "Standard", contents: "<a/>" },
                 { name: "", contents: "<b/>" },
                 { name: "Nothing", contents: "" },
-                { name: "Missing contents" }
+                { name: "Missing contents" },
+                null,
+                42
             ]
         });
         const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
@@ -175,8 +179,7 @@ describe("reusing answers", () => {
     });
 
     it("still shares one request between callers when answers are not reused at all", async () => {
-        // Sharing and reuse are separate: a time to live of zero means nothing is reused once it has settled, not
-        // that three callers may hit the same endpoint at once.
+        // Sharing and reuse are separate: a time to live of zero means nothing is reused once it has settled, not that three callers may hit the same endpoint at once.
         let calls = 0;
         const transport: TestmotorFetch = async () => {
             calls += 1;
