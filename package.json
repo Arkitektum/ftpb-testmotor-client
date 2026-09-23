@@ -1,6 +1,6 @@
 {
     "name": "@arkitektum/ftpb-testmotor-client",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Reads example form data from the FtPB testmotor: which apps it holds, and each app's XML files",
     "type": "module",
     "main": "./dist/index.cjs",
