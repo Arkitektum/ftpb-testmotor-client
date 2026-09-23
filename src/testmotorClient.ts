@@ -142,10 +142,18 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
     const { baseUrl, fetch: transport = defaultFetch, cacheTtlMs = DEFAULT_CACHE_TTL_MS } = options;
     const cache = new Map<string, CacheEntry>();
 
-    /** The base URL as it stands, with any trailing slash removed so paths append cleanly. */
+    /**
+     * The base URL as it stands, with any trailing slash removed so paths append cleanly.
+     *
+     * The slashes are counted off rather than matched with a pattern like `/\/+$/`. That pattern backtracks through a long run of slashes once for every position it could have started at, so the time it takes grows with the square of the run: a value of forty thousand slashes takes over half a second, and twice that takes four times as long. The base URL is configuration rather than anything a request carries, so this is not an opening for anyone, but a published library should not hand a caller a sharp edge that a value from somewhere less trusted could run into.
+     */
     function currentBaseUrl(): string {
-        const configured = typeof baseUrl === "function" ? baseUrl() : baseUrl;
-        return (configured ?? "").trim().replace(/\/+$/, "");
+        const trimmed = ((typeof baseUrl === "function" ? baseUrl() : baseUrl) ?? "").trim();
+        let end = trimmed.length;
+        while (end > 0 && trimmed[end - 1] === "/") {
+            end -= 1;
+        }
+        return trimmed.slice(0, end);
     }
 
     /**

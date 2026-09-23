@@ -242,6 +242,20 @@ describe("where the testmotor lives", () => {
         assert.deepEqual(calls, [`${HOST}/api/altinn-app`]);
     });
 
+    it("is not slowed down by a long run of slashes that is not at the end", async () => {
+        // A guard against going back to a pattern like /\/+$/. It backtracks through the run once for every position it could have started at, and the worst case is a run that nothing follows a match with, so the run is walked and abandoned again and again. That took over half a second for this input, and four times as long each time the run doubles. Counting slashes off the end takes a fraction of a millisecond, so the budget below survives a slow machine and still catches a return to quadratic behaviour.
+        const { calls, transport } = stub({});
+        const client = createTestmotorClient({ baseUrl: `${HOST}${"/".repeat(40000)}a`, fetch: transport });
+
+        const start = process.hrtime.bigint();
+        await client.fetchApps();
+        const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+
+        // Nothing to strip, since the last character is not a slash.
+        assert.equal(calls[0]?.endsWith("a/api/altinn-app"), true);
+        assert.ok(elapsedMs < 250, `handling the base url took ${elapsedMs.toFixed(1)} ms`);
+    });
+
     it("reads a base URL given as a function on every request", async () => {
         // The caller that takes this from the environment wants dotenv to have run, and its tests move the host.
         const calls: string[] = [];
