@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "target": "esnext",
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "lib": ["esnext"],
+        "types": ["node"],
+        "strict": true,
+        "skipLibCheck": true,
+        "isolatedModules": true,
+        "verbatimModuleSyntax": true,
+        // Relative imports name the .ts file they mean, so `node --test` can run the sources directly with nothing
+        // installed. tsup bundles for the published build, and rewriteRelativeImportExtensions keeps any emitted
+        // JavaScript pointing at .js.
+        "allowImportingTsExtensions": true,
+        "rewriteRelativeImportExtensions": true,
+        "noEmit": true
+    },
+    "include": ["src"]
+}
