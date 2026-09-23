@@ -14,7 +14,9 @@
         // JavaScript pointing at .js.
         "allowImportingTsExtensions": true,
         "rewriteRelativeImportExtensions": true,
-        "noEmit": true
+        "noEmit": true,
+        // Needed by `yarn build` and nothing else. Building the declarations, tsup sets `baseUrl` to "." when the tsconfig leaves it unset, and TypeScript 6 refuses to run with a deprecated option unless the deprecation is acknowledged. Without this line the bundles build and the dts step then fails with TS5101.
+        "ignoreDeprecations": "6.0"
     },
     "include": ["src"]
 }
