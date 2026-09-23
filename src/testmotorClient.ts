@@ -81,6 +81,7 @@ export const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 interface CacheEntry {
     at: number;
     value: Promise<unknown>;
+    settled: boolean;
 }
 
 /**
@@ -138,10 +139,12 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
      * Fetches and validates one endpoint, reusing a recent answer.
      *
      * The promise is cached rather than the value, so a page load asking for the same app several times makes one request instead of racing several. A rejection is evicted immediately, because caching a failure would let a moment of the host being down outlast the outage.
+     *
+     * Sharing and reuse are separate questions. A request still in flight is always shared, whatever the time to live says, so callers cannot fan out to the same endpoint at once. Only once it has settled does freshness decide, which for a time to live of zero is never.
      */
     function getJson(path: string): Promise<unknown> {
         const hit = cache.get(path);
-        if (hit && Date.now() - hit.at < cacheTtlMs) {
+        if (hit && (!hit.settled || Date.now() - hit.at < cacheTtlMs)) {
             return hit.value;
         }
 
@@ -162,12 +165,19 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
             return response.body;
         })();
 
-        cache.set(path, { at: Date.now(), value });
-        value.catch(() => {
-            if (cache.get(path)?.value === value) {
-                cache.delete(path);
+        const entry: CacheEntry = { at: Date.now(), value, settled: false };
+        cache.set(path, entry);
+        value.then(
+            () => {
+                entry.settled = true;
+            },
+            () => {
+                // Evicting is enough to make it unreachable, so a rejected entry never needs marking as settled.
+                if (cache.get(path)?.value === value) {
+                    cache.delete(path);
+                }
             }
-        });
+        );
         return value;
     }
 

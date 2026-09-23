@@ -174,6 +174,22 @@ describe("reusing answers", () => {
         assert.equal(calls, 1);
     });
 
+    it("still shares one request between callers when answers are not reused at all", async () => {
+        // Sharing and reuse are separate: a time to live of zero means nothing is reused once it has settled, not
+        // that three callers may hit the same endpoint at once.
+        let calls = 0;
+        const transport: TestmotorFetch = async () => {
+            calls += 1;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            return { ok: true, status: 200, statusText: "OK", body: [] };
+        };
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport, cacheTtlMs: 0 });
+
+        await Promise.all([client.fetchApps(), client.fetchApps(), client.fetchApps()]);
+
+        assert.equal(calls, 1);
+    });
+
     it("asks again once the answer is stale", async () => {
         const { calls, transport } = stub({ "/api/altinn-app": [] });
         const client = createTestmotorClient({ baseUrl: HOST, fetch: transport, cacheTtlMs: 0 });
