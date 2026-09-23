@@ -1,0 +1,49 @@
+name: Publish GitHub Package
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  publish-github-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://npm.pkg.github.com/
+          scope: "@arkitektum"
+
+      # Ensure Yarn v4 from packageManager is used
+      - name: Enable Corepack and activate Yarn 4
+        run: |
+          corepack enable
+          yarn --version
+
+      # A registry timeout can crash Yarn outright instead of failing one fetch, so retry the whole install rather than trusting Yarn's own retries to recover.
+      - name: Install dependencies
+        run: |
+          for attempt in 1 2 3; do
+              yarn install --immutable && exit 0
+              echo "::warning::yarn install failed (attempt $attempt/3), retrying in 15s"
+              sleep 15
+          done
+          exit 1
+
+      - run: yarn typecheck
+      - run: yarn test
+      - run: yarn build
+
+      - name: Publish to GitHub Packages
+        if: ${{ success() }}
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN }}
