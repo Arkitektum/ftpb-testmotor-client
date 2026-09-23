@@ -39,6 +39,7 @@
     "license": "MIT",
     "devDependencies": {
         "@eslint/js": "^10.0.1",
+        "@microsoft/eslint-formatter-sarif": "^3.1.0",
         "@types/node": "^24.10.1",
         "eslint": "^10.10.0",
         "globals": "^17.12.0",
