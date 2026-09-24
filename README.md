@@ -8,6 +8,17 @@ The testmotor serves the copy of the example data that the DIBK test team mainta
 
 It is published in both ESM and CommonJS builds, with TypeScript declarations.
 
+## Who uses it
+
+Two repositories, for the same reason and in different ways:
+
+- **`altinn-studio-custom-components-api`** uses the built-in transport, and passes `baseUrl` as a function so the value is read per request after `dotenv` has run.
+- **`altinn-studio-api-tools`** passes an adapter over its own `altinnFetch`, keeping that server's request timeout and 502 envelope.
+
+Both consumer modules are about forty lines. Change the client here and publish; neither of them holds logic worth editing.
+
+They also share [`@arkitektum/ftpb-app-catalogue`](https://github.com/Arkitektum/ftpb-app-catalogue), which is the list of apps this client is asked about. The two packages are independent, and a consumer can use either alone.
+
 ## Installation
 
 ```bash
