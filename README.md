@@ -2,9 +2,11 @@
 
 ![CI](https://github.com/Arkitektum/ftpb-testmotor-client/actions/workflows/ci.yml/badge.svg) ![npm version](https://img.shields.io/npm/v/@arkitektum/ftpb-testmotor-client.svg)
 
-Reads example form data from the FtPB testmotor: which apps it holds data for, and each app's XML files.
+Reads example form data from the FtPB testmotor: which apps it holds data for, each app's XML files, and the subform files each app holds as predefined attachments.
 
 The testmotor serves the copy of the example data that the DIBK test team maintains out of an Azure file share, and it does one thing on the way out that a file committed in a repository cannot. It stamps the date fields a form cares about with a date some days ahead, on every request. A ferdigattest example is only valid while its `bekreftelseInnen` and `utfoertInnen` fall inside the next fortnight, and several other form types have a rule of that shape, so a committed copy is right on the day it is committed and stale a couple of weeks later. That is the reason these examples are read over HTTP rather than kept on disk.
+
+Subform examples are read from the testmotor too, though for a different reason. It files them per app, as predefined attachments under the subform's data type, and the same subform can hold different files under different apps: `DispensasjonssoeknadDataV1` does under `disp-v1` and `fts-v1`. A single shared copy on disk cannot represent that. Their dates are not stamped, as far as has been seen.
 
 It is published in both ESM and CommonJS builds, with TypeScript declarations.
 
@@ -40,6 +42,7 @@ const testmotor = createTestmotorClient({ baseUrl: process.env.TESTMOTOR_URL });
 
 const apps = await testmotor.fetchApps();
 const files = await testmotor.fetchFormXml("fa-v5");
+const subformFiles = await testmotor.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1");
 ```
 
 `baseUrl` may be a function instead of a string, in which case it is read on every request. That matters when the value comes from the environment and `dotenv` has to run first, or when a test moves the host between cases.
@@ -55,14 +58,16 @@ By default the client uses the global `fetch`. An application that already has i
 ```js
 const testmotor = createTestmotorClient({
     baseUrl: config.testmotorUrl,
-    fetch: async (url) => {
-        const response = await altinnFetch({ url });
+    fetch: async (url, request) => {
+        const response = await altinnFetch({ url, headers: request?.headers });
         return { ok: response.ok, status: response.status, statusText: response.statusText, body: response.body };
     }
 });
 ```
 
 The transport is handed a whole URL and answers `{ ok, status, statusText, body }`, where `body` is the parsed JSON. Throwing is expected for a request that never reached the host. The client turns a failed status into an error naming the URL, the status and a short quotation of the body.
+
+For the subform downloads it is also handed a second argument, `{ headers, accept }`. The headers carry `fileName`, which is how the testmotor tells the files of one data type apart, and `accept: "text"` asks for the body as the text it came as, since the answer is the XML file itself rather than JSON. A transport that ignores the second argument still serves the main form endpoints, but every subform download through it will fail: without the header the testmotor answers 500, with a misleading complaint about a missing folder.
 
 ## API
 
@@ -71,16 +76,17 @@ The transport is handed a whole URL and answers `{ ok, status, statusText, body 
 | `createTestmotorClient(options)` | function | Creates a client. Options are `baseUrl`, and optionally `fetch` and `cacheTtlMs`. |
 | `client.fetchApps()` | method | The apps the testmotor holds example data for, in the order it answers them. |
 | `client.fetchFormXml(appId)` | method | One app's example files, in the order the testmotor answers them. Empty when it holds none. |
+| `client.fetchSubformXml(appId, dataType)` | method | One subform's predefined XML files as that app holds them, in the order the testmotor lists them, named without the `.xml`. Empty when it holds none. |
 | `client.configured` | property | Whether a base URL is set at all. False means the testmotor is switched off. |
 | `client.clearCache()` | method | Forgets everything read so far. Only tests need this. |
 | `DEFAULT_CACHE_TTL_MS` | constant | Five minutes, the default time an answer is reused. |
-| `TestmotorApp`, `TestmotorXmlFile`, `TestmotorClient`, `TestmotorClientOptions`, `TestmotorFetch`, `TestmotorHttpResponse` | types | The shapes above, for TypeScript callers. |
+| `TestmotorApp`, `TestmotorXmlFile`, `TestmotorClient`, `TestmotorClientOptions`, `TestmotorFetch`, `TestmotorHttpResponse`, `TestmotorRequest` | types | The shapes above, for TypeScript callers. |
 
 ### What the client will not do for you
 
 It does not sort the files. The share orders them by a numeric prefix that has already been stripped by the time they arrive, so sorting the stems would put `Maksimumsversjon` ahead of `Minimumsversjon` by accident rather than by intent. The order they arrive in is the share's own, and the same order the testmotor's own interface offers.
 
-It drops entries it cannot use: an app missing either its id or its main form id, and a file missing either its name or its contents. An app id is not enough on its own to identify example data either, since `fa-v3` and `fa-v5` are both filed under `FA` and hold different files.
+It drops entries it cannot use: an app missing either its id or its main form id, and a file missing either its name or its contents. For subforms it also leaves out every predefined file that is not XML, since the same list carries the PDFs and drawings of the attachment types that are not subforms. It does not drop a subform file because another holds the same contents under a different name, which the testmotor has several of: each is answered, as the testmotor's own interface offers each. An app id is not enough on its own to identify example data either, since `fa-v3` and `fa-v5` are both filed under `FA` and hold different files.
 
 ## Caching
 

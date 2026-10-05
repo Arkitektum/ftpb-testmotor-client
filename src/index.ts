@@ -5,5 +5,6 @@ export type {
     TestmotorClientOptions,
     TestmotorFetch,
     TestmotorHttpResponse,
+    TestmotorRequest,
     TestmotorXmlFile
 } from "./testmotorClient.ts";

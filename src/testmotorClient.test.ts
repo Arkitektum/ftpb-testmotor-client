@@ -1,4 +1,4 @@
-import type { TestmotorFetch, TestmotorHttpResponse } from "./testmotorClient.ts";
+import type { TestmotorFetch, TestmotorHttpResponse, TestmotorRequest } from "./testmotorClient.ts";
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createTestmotorClient } from "./testmotorClient.ts";
@@ -21,6 +21,33 @@ function stub(answers: Record<string, unknown>, options: { status?: number; stat
         } satisfies TestmotorHttpResponse;
     };
     return { calls, transport };
+}
+
+/**
+ * A transport for the attachment endpoints: a list per app, and files told apart by the `fileName` header the way the testmotor tells them apart.
+ *
+ * A file whose name it does not hold answers 404, as the testmotor does. Every request is recorded with the header it carried and how it asked for the body to be read.
+ */
+function attachmentStub(lists: Record<string, unknown>, files: Record<string, string>) {
+    const calls: { path: string; fileName: string | undefined; accept: TestmotorRequest["accept"] }[] = [];
+    const transport: TestmotorFetch = async (url, request) => {
+        const path = url.slice(HOST.length);
+        const fileName = request?.headers?.fileName;
+        calls.push({ path, fileName, accept: request?.accept });
+        if (fileName === undefined) {
+            return { ok: true, status: 200, statusText: "OK", body: lists[path] ?? [] };
+        }
+        const contents = files[`${path}/${fileName}`];
+        return contents === undefined
+            ? { ok: false, status: 404, statusText: "Not Found", body: { message: "Fant ikke vedlegg" } }
+            : { ok: true, status: 200, statusText: "OK", body: contents };
+    };
+    return { calls, transport };
+}
+
+/** One attachment type as the list answers it, with only the fields this client reads. */
+function attachmentType(id: string, fileNames: string[]) {
+    return { id, predefined: fileNames.map((fileName) => ({ fileName, extension: ".xml" })) };
 }
 
 const originalFetch = globalThis.fetch;
@@ -141,6 +168,140 @@ describe("fetchFormXml", () => {
     });
 });
 
+describe("fetchSubformXml", () => {
+    const LIST = "/api/attachment/disp-v1";
+    const FILE = "/api/attachment/disp-v1/DispensasjonssoeknadDataV1";
+
+    it("answers that data type's predefined files, in the order they are listed, each fetched by name", async () => {
+        const { calls, transport } = attachmentStub(
+            { [LIST]: [attachmentType("DispensasjonssoeknadDataV1", ["Dispensasjonssoeknad1.xml", "Dispensasjonssoeknad.xml"])] },
+            { [`${FILE}/Dispensasjonssoeknad1.xml`]: "<one/>", [`${FILE}/Dispensasjonssoeknad.xml`]: "<other/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"), [
+            { name: "Dispensasjonssoeknad1", contents: "<one/>" },
+            { name: "Dispensasjonssoeknad", contents: "<other/>" }
+        ]);
+        assert.deepEqual(calls, [
+            { path: LIST, fileName: undefined, accept: undefined },
+            { path: FILE, fileName: "Dispensasjonssoeknad1.xml", accept: "text" },
+            { path: FILE, fileName: "Dispensasjonssoeknad.xml", accept: "text" }
+        ]);
+    });
+
+    it("leaves out the other attachment types and anything that is not XML", async () => {
+        // The list carries every attachment type the app accepts, mostly PDFs, and a predefined entry is not guaranteed to have a name.
+        const { transport } = attachmentStub(
+            {
+                [LIST]: [
+                    attachmentType("Annet", ["Annet.pdf"]),
+                    attachmentType("GjenpartNabovarselDataV3", ["GjenpartNabovarselV3.xml"]),
+                    {
+                        id: "DispensasjonssoeknadDataV1",
+                        predefined: [{ fileName: "Tegning.pdf" }, { fileName: "" }, {}, null, { fileName: "Stor.XML" }, { fileName: "Liten.xml" }]
+                    }
+                ]
+            },
+            {
+                [`${FILE}/Stor.XML`]: "<stor/>",
+                [`${FILE}/Liten.xml`]: "<liten/>",
+                "/api/attachment/disp-v1/GjenpartNabovarselDataV3/GjenpartNabovarselV3.xml": "<gjenpart/>"
+            }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"), [
+            { name: "Stor", contents: "<stor/>" },
+            { name: "Liten", contents: "<liten/>" }
+        ]);
+    });
+
+    it("answers nothing for a data type the app does not list, or lists without files", async () => {
+        const { calls, transport } = attachmentStub(
+            {
+                [LIST]: [
+                    attachmentType("Annet", ["Annet.pdf"]),
+                    { id: "GjenpartNabovarselDataV3" },
+                    { id: "GjennomfoeringsplanDataV7", predefined: "none" }
+                ]
+            },
+            {}
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"), []);
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "GjenpartNabovarselDataV3"), []);
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "GjennomfoeringsplanDataV7"), []);
+        assert.equal(calls.length, 1, "nothing to download, and the list itself is asked for once");
+    });
+
+    it("answers every name even when two files hold the same contents", async () => {
+        // The testmotor holds copies under several names, and its own interface offers each of them.
+        const { transport } = attachmentStub(
+            { [LIST]: [attachmentType("DispensasjonssoeknadDataV1", ["dispensasjonssoeknad-1.xml", "Dispensasjonssoeknad1.xml"])] },
+            { [`${FILE}/dispensasjonssoeknad-1.xml`]: "<same/>", [`${FILE}/Dispensasjonssoeknad1.xml`]: "<same/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(
+            (await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1")).map((file) => file.name),
+            ["dispensasjonssoeknad-1", "Dispensasjonssoeknad1"]
+        );
+    });
+
+    it("drops a file with no contents", async () => {
+        const { transport } = attachmentStub(
+            { [LIST]: [attachmentType("DispensasjonssoeknadDataV1", ["Tom.xml", "Full.xml"])] },
+            { [`${FILE}/Tom.xml`]: "", [`${FILE}/Full.xml`]: "<full/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"), [{ name: "Full", contents: "<full/>" }]);
+    });
+
+    it("fails, naming the file, when a download fails", async () => {
+        // The testmotor's own 404 names the data type and not the file, so without this a wrong name would be hard to find.
+        const { transport } = attachmentStub(
+            { [LIST]: [attachmentType("DispensasjonssoeknadDataV1", ["Finnes.xml", "Mangler.xml"])] },
+            { [`${FILE}/Finnes.xml`]: "<finnes/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        await assert.rejects(
+            () => client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"),
+            /DispensasjonssoeknadDataV1 \(file Mangler\.xml\) answered 404 Not Found: \{"message":"Fant ikke vedlegg"\}/
+        );
+    });
+
+    it("refuses a download that did not come back as text", async () => {
+        const transport: TestmotorFetch = async (_url, request) =>
+            request?.headers?.fileName === undefined
+                ? { ok: true, status: 200, statusText: "OK", body: [attachmentType("DispensasjonssoeknadDataV1", ["A.xml"])] }
+                : { ok: true, status: 200, statusText: "OK", body: { parsed: "as if it were JSON" } };
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        await assert.rejects(
+            () => client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"),
+            /\(file A\.xml\) did not answer the file as text/
+        );
+    });
+
+    it("escapes an app id and a data type that would otherwise change the path", async () => {
+        const { calls, transport } = attachmentStub(
+            { "/api/attachment/..%2Fxml": [attachmentType("a/b", ["A.xml"])] },
+            { "/api/attachment/..%2Fxml/a%2Fb/A.xml": "<a/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(await client.fetchSubformXml("../xml", "a/b"), [{ name: "A", contents: "<a/>" }]);
+        assert.deepEqual(
+            calls.map((call) => call.path),
+            ["/api/attachment/..%2Fxml", "/api/attachment/..%2Fxml/a%2Fb"]
+        );
+    });
+});
+
 describe("reusing answers", () => {
     it("asks once for repeated requests within the time an answer is good for", async () => {
         const { calls, transport } = stub({ "/api/altinn-app": [] });
@@ -162,6 +323,26 @@ describe("reusing answers", () => {
         assert.equal((await client.fetchFormXml("fa-v3"))[0]?.name, "v3");
         assert.equal((await client.fetchFormXml("fa-v5"))[0]?.name, "v5");
         assert.equal(calls.length, 2);
+    });
+
+    it("reuses each subform file by its name, though they all share one URL", async () => {
+        const list = "/api/attachment/disp-v1";
+        const file = "/api/attachment/disp-v1/DispensasjonssoeknadDataV1";
+        const { calls, transport } = attachmentStub(
+            { [list]: [attachmentType("DispensasjonssoeknadDataV1", ["A.xml", "B.xml"])] },
+            { [`${file}/A.xml`]: "<a/>", [`${file}/B.xml`]: "<b/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        const first = await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1");
+        const second = await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1");
+
+        assert.deepEqual(
+            first.map((f) => f.contents),
+            ["<a/>", "<b/>"]
+        );
+        assert.deepEqual(second, first);
+        assert.equal(calls.length, 3, "the list and each file once");
     });
 
     it("shares one request between callers that ask at the same time", async () => {
@@ -310,6 +491,23 @@ describe("the transport it falls back on", () => {
         const client = createTestmotorClient({ baseUrl: HOST });
 
         await assert.rejects(() => client.fetchApps(), /did not answer JSON/);
+    });
+
+    it("sends the file name and answers a downloaded file as text", async () => {
+        const seen: (string | null)[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            const fileName = new Headers(init?.headers).get("fileName");
+            seen.push(fileName);
+            return fileName === null
+                ? new Response(JSON.stringify([attachmentType("DispensasjonssoeknadDataV1", ["Dispensasjonssoeknad1.xml"])]), { status: 200 })
+                : new Response("<dispensasjonssoeknad/>", { status: 200, headers: { "Content-Type": "text/xml" } });
+        }) as typeof fetch;
+        const client = createTestmotorClient({ baseUrl: HOST });
+
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"), [
+            { name: "Dispensasjonssoeknad1", contents: "<dispensasjonssoeknad/>" }
+        ]);
+        assert.deepEqual(seen, [null, "Dispensasjonssoeknad1.xml"]);
     });
 
     it("reads a JSON body", async () => {
