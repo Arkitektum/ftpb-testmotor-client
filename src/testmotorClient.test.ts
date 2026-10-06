@@ -469,7 +469,10 @@ describe("where the testmotor lives", () => {
         const apps = await client.fetchApps();
 
         assert.deepEqual(calls, ["https://first.example/api/altinn-app", "https://second.example/api/altinn-app"]);
-        assert.deepEqual(apps.map((app) => app.appId), ["https://second.example"]);
+        assert.deepEqual(
+            apps.map((app) => app.appId),
+            ["https://second.example"]
+        );
     });
 
     it("still answers from the cache when the host moves back", async () => {

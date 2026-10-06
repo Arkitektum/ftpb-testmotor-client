@@ -71,16 +71,16 @@ For the subform downloads it is also handed a second argument, `{ headers, accep
 
 ## API
 
-| Export | Kind | Purpose |
-| ------ | ---- | ------- |
-| `createTestmotorClient(options)` | function | Creates a client. Options are `baseUrl`, and optionally `fetch` and `cacheTtlMs`. |
-| `client.fetchApps()` | method | The apps the testmotor holds example data for, in the order it answers them. |
-| `client.fetchFormXml(appId)` | method | One app's example files, in the order the testmotor answers them. Empty when it holds none. |
-| `client.fetchSubformXml(appId, dataType)` | method | One subform's predefined XML files as that app holds them, in the order the testmotor lists them, named without the `.xml`. Empty when it holds none. |
-| `client.configured` | property | Whether a base URL is set at all. False means the testmotor is switched off. |
-| `client.clearCache()` | method | Forgets everything read so far. Only tests need this. |
-| `DEFAULT_CACHE_TTL_MS` | constant | Five minutes, the default time an answer is reused. |
-| `TestmotorApp`, `TestmotorXmlFile`, `TestmotorClient`, `TestmotorClientOptions`, `TestmotorFetch`, `TestmotorHttpResponse`, `TestmotorRequest` | types | The shapes above, for TypeScript callers. |
+| Export                                                                                                                                         | Kind     | Purpose                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createTestmotorClient(options)`                                                                                                               | function | Creates a client. Options are `baseUrl`, and optionally `fetch` and `cacheTtlMs`.                                                                     |
+| `client.fetchApps()`                                                                                                                           | method   | The apps the testmotor holds example data for, in the order it answers them.                                                                          |
+| `client.fetchFormXml(appId)`                                                                                                                   | method   | One app's example files, in the order the testmotor answers them. Empty when it holds none.                                                           |
+| `client.fetchSubformXml(appId, dataType)`                                                                                                      | method   | One subform's predefined XML files as that app holds them, in the order the testmotor lists them, named without the `.xml`. Empty when it holds none. |
+| `client.configured`                                                                                                                            | property | Whether a base URL is set at all. False means the testmotor is switched off.                                                                          |
+| `client.clearCache()`                                                                                                                          | method   | Forgets everything read so far. Only tests need this.                                                                                                 |
+| `DEFAULT_CACHE_TTL_MS`                                                                                                                         | constant | Five minutes, the default time an answer is reused.                                                                                                   |
+| `TestmotorApp`, `TestmotorXmlFile`, `TestmotorClient`, `TestmotorClientOptions`, `TestmotorFetch`, `TestmotorHttpResponse`, `TestmotorRequest` | types    | The shapes above, for TypeScript callers.                                                                                                             |
 
 ### What the client will not do for you
 
