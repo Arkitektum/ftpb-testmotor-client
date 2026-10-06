@@ -454,6 +454,53 @@ describe("where the testmotor lives", () => {
         assert.deepEqual(calls, ["https://first.example/api/altinn-app", "https://second.example/api/altinn-app"]);
     });
 
+    it("does not answer for a new host from what the old one said", async () => {
+        // The default time to live, unlike the test above, so a cache keyed by the path alone would answer the second call itself.
+        const calls: string[] = [];
+        let host = "https://first.example";
+        const transport: TestmotorFetch = async (url) => {
+            calls.push(url);
+            return { ok: true, status: 200, statusText: "OK", body: [{ appId: new URL(url).origin, mainFormId: "A" }] };
+        };
+        const client = createTestmotorClient({ baseUrl: () => host, fetch: transport });
+
+        await client.fetchApps();
+        host = "https://second.example";
+        const apps = await client.fetchApps();
+
+        assert.deepEqual(calls, ["https://first.example/api/altinn-app", "https://second.example/api/altinn-app"]);
+        assert.deepEqual(apps.map((app) => app.appId), ["https://second.example"]);
+    });
+
+    it("still answers from the cache when the host moves back", async () => {
+        const calls: string[] = [];
+        let host = "https://first.example";
+        const transport: TestmotorFetch = async (url) => {
+            calls.push(url);
+            return { ok: true, status: 200, statusText: "OK", body: [] };
+        };
+        const client = createTestmotorClient({ baseUrl: () => host, fetch: transport });
+
+        await client.fetchApps();
+        host = "https://second.example";
+        await client.fetchApps();
+        host = "https://first.example";
+        await client.fetchApps();
+
+        assert.deepEqual(calls, ["https://first.example/api/altinn-app", "https://second.example/api/altinn-app"]);
+    });
+
+    it("refuses once the base URL is gone, even with an answer cached", async () => {
+        let host = HOST;
+        const client = createTestmotorClient({ baseUrl: () => host, fetch: async () => ({ ok: true, status: 200, statusText: "OK", body: [] }) });
+
+        await client.fetchApps();
+        host = "";
+
+        assert.equal(client.configured, false);
+        await assert.rejects(() => client.fetchApps(), /no base URL configured/);
+    });
+
     it("reports itself unconfigured when there is no base URL, and refuses to guess", async () => {
         const client = createTestmotorClient({ baseUrl: "", fetch: async () => ({ ok: true, status: 200, statusText: "OK", body: [] }) });
 

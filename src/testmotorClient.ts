@@ -191,17 +191,20 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
      *
      * Sharing and reuse are separate questions. A request still in flight is always shared, whatever the time to live says, so callers cannot fan out to the same endpoint at once. Only once it has settled does freshness decide, which for a time to live of zero is never.
      *
-     * The key is not always the path. Every predefined file of a subform shares one URL and is told apart by a header, so those requests are keyed by the file name as well.
+     * Answers are keyed by the host as well as the request, because the base URL can be a function and change between calls. Without it, moving the host would go on serving the old host's answers until they expired. The host is read before the cache for the same reason, so a client with no base URL refuses even when it holds an answer.
+     *
+     * The request part of the key is not always the path. Every predefined file of a subform shares one URL and is told apart by a header, so those requests are keyed by the file name as well.
      */
     function cached<T>(key: string, path: string, request: TestmotorRequest | undefined, read: (url: string, body: unknown) => T): Promise<T> {
-        const hit = cache.get(key);
-        if (hit && (!hit.settled || Date.now() - hit.at < cacheTtlMs)) {
-            return hit.value as Promise<T>;
-        }
-
         const host = currentBaseUrl();
         if (!host) {
             return Promise.reject(new Error("The testmotor has no base URL configured, so it cannot be asked for anything."));
+        }
+
+        const cacheKey = `${host}${key}`;
+        const hit = cache.get(cacheKey);
+        if (hit && (!hit.settled || Date.now() - hit.at < cacheTtlMs)) {
+            return hit.value as Promise<T>;
         }
 
         const url = `${host}${path}`;
@@ -216,15 +219,15 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
         })();
 
         const entry: CacheEntry = { at: Date.now(), value, settled: false };
-        cache.set(key, entry);
+        cache.set(cacheKey, entry);
         value.then(
             () => {
                 entry.settled = true;
             },
             () => {
                 // Evicting is enough to make it unreachable, so a rejected entry never needs marking as settled.
-                if (cache.get(key)?.value === value) {
-                    cache.delete(key);
+                if (cache.get(cacheKey)?.value === value) {
+                    cache.delete(cacheKey);
                 }
             }
         );
