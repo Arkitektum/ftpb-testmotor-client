@@ -59,8 +59,11 @@ By default the client uses the global `fetch`. An application that already has i
 const testmotor = createTestmotorClient({
     baseUrl: config.testmotorUrl,
     fetch: async (url, request) => {
-        const response = await altinnFetch({ url, headers: request?.headers });
-        return { ok: response.ok, status: response.status, statusText: response.statusText, body: response.body };
+        const response = await fetch(url, { headers: request?.headers, signal: AbortSignal.timeout(10_000) });
+        const text = await response.text();
+        log.info(`${response.status} ${url}`);
+        const body = request?.accept === "text" || !response.ok ? text : JSON.parse(text);
+        return { ok: response.ok, status: response.status, statusText: response.statusText, body };
     }
 });
 ```
@@ -68,6 +71,8 @@ const testmotor = createTestmotorClient({
 The transport is handed a whole URL and answers `{ ok, status, statusText, body }`, where `body` is the parsed JSON. Throwing is expected for a request that never reached the host. The client turns a failed status into an error naming the URL, the status and a short quotation of the body.
 
 For the subform downloads it is also handed a second argument, `{ headers, accept }`. The headers carry `fileName`, which is how the testmotor tells the files of one data type apart, and `accept: "text"` asks for the body as the text it came as, since the answer is the XML file itself rather than JSON. A transport that ignores the second argument still serves the main form endpoints, but every subform download through it will fail: without the header the testmotor answers 500, with a misleading complaint about a missing folder.
+
+The body of a download has to be the whole file. A transport built on an HTTP layer that shortens text bodies, to keep a log readable for instance, hands back a broken XML file without an error, so ask that layer for the raw bytes and decode them instead.
 
 ## API
 
