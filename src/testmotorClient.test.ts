@@ -1,7 +1,7 @@
+import { DEFAULT_TIMEOUT_MS, createTestmotorClient } from "./testmotorClient.ts";
 import type { TestmotorFetch, TestmotorHttpResponse, TestmotorRequest } from "./testmotorClient.ts";
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createTestmotorClient } from "./testmotorClient.ts";
 
 const HOST = "https://testmotor.example";
 
@@ -515,6 +515,64 @@ describe("where the testmotor lives", () => {
         const client = createTestmotorClient({ baseUrl: HOST });
 
         assert.equal(client.configured, true);
+    });
+});
+
+/** A global fetch for a testmotor that accepts every request and never answers, so a request only ends when its signal aborts. */
+function hangingFetch(): typeof fetch {
+    return ((input: string | URL | Request, init?: RequestInit) => {
+        return new Promise((resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+        });
+    }) as typeof fetch;
+}
+
+describe("the built-in transport's timeout", () => {
+    it("gives up on a request that is never answered, and says so", async () => {
+        globalThis.fetch = hangingFetch();
+        const client = createTestmotorClient({ baseUrl: HOST, timeoutMs: 20 });
+
+        await assert.rejects(() => client.fetchApps(), /testmotor\.example\/api\/altinn-app did not answer within 20 ms/);
+    });
+
+    it("gives up on a body that stops arriving part way", async () => {
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            const body = new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode("[{"));
+                    init?.signal?.addEventListener("abort", () => controller.error(init.signal!.reason), { once: true });
+                }
+            });
+            return new Response(body, { status: 200 });
+        }) as typeof fetch;
+        const client = createTestmotorClient({ baseUrl: HOST, timeoutMs: 20 });
+
+        await assert.rejects(() => client.fetchApps(), /did not answer within 20 ms/);
+    });
+
+    it("has a limit by default", async () => {
+        const signals: (AbortSignal | undefined)[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            signals.push(init?.signal ?? undefined);
+            return new Response("[]", { status: 200 });
+        }) as typeof fetch;
+
+        await createTestmotorClient({ baseUrl: HOST }).fetchApps();
+
+        assert.equal(DEFAULT_TIMEOUT_MS, 30_000);
+        assert.ok(signals[0] instanceof AbortSignal, "the request should carry a signal");
+    });
+
+    it("sets no limit of its own for a timeout of zero", async () => {
+        const signals: (AbortSignal | undefined)[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            signals.push(init?.signal ?? undefined);
+            return new Response("[]", { status: 200 });
+        }) as typeof fetch;
+
+        await createTestmotorClient({ baseUrl: HOST, timeoutMs: 0 }).fetchApps();
+
+        assert.deepEqual(signals, [undefined]);
     });
 });
 

@@ -76,6 +76,12 @@ export interface TestmotorClientOptions {
     fetch?: TestmotorFetch;
     /** How long an answer is reused. Zero disables reuse, though concurrent callers still share one request. */
     cacheTtlMs?: number;
+    /**
+     * How long the built-in transport waits for one request, reading the body included, before giving up. Zero waits as long as `fetch` does, which is undici's five minutes.
+     *
+     * Only the built-in transport reads this. A caller that supplies `fetch` keeps its own timeout, which is part of why it would supply one.
+     */
+    timeoutMs?: number;
 }
 
 export interface TestmotorClient {
@@ -102,6 +108,13 @@ export interface TestmotorClient {
  */
 export const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 
+/**
+ * How long the built-in transport waits for a request by default.
+ *
+ * Without a limit a testmotor that accepts the connection and never answers holds every caller of that request for minutes, since a request in flight is shared. Thirty seconds is the limit the two consumers use for their other upstreams.
+ */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
 interface CacheEntry {
     at: number;
     value: Promise<unknown>;
@@ -111,32 +124,47 @@ interface CacheEntry {
 /**
  * A transport built on the global `fetch`, used when a caller supplies none.
  *
- * Every failure names the URL that failed. Callers surface these messages to people who need "could not be reached" to read differently from "holds nothing for this app", and a bare `fetch failed` does not say which host was unreachable.
+ * Every failure names the URL that failed. Callers surface these messages to people who need "could not be reached" to read differently from "holds nothing for this app", and a bare `fetch failed` does not say which host was unreachable. A timeout says so in as many words, since the abort itself reads only "The operation was aborted due to timeout".
+ *
+ * @param timeoutMs - How long one request may take, body included. Zero for no limit of its own.
  */
-const defaultFetch: TestmotorFetch = async (url, request) => {
-    let response: Response;
-    try {
-        response = await fetch(url, { headers: request?.headers });
-    } catch (error) {
-        throw new Error(`${url} could not be reached: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
+function createDefaultFetch(timeoutMs: number): TestmotorFetch {
+    const failure = (url: string, error: unknown, what: string) =>
+        error instanceof Error && error.name === "TimeoutError"
+            ? new Error(`${url} did not answer within ${timeoutMs} ms`, { cause: error })
+            : new Error(`${url} ${what}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 
-    const text = await response.text();
-    if (!response.ok) {
-        // Carried through as text, because an error page is worth quoting and is rarely JSON.
-        return { ok: false, status: response.status, statusText: response.statusText, body: text };
-    }
+    return async (url, request) => {
+        const signal = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+        let response: Response;
+        let text: string;
+        try {
+            response = await fetch(url, { headers: request?.headers, signal });
+        } catch (error) {
+            throw failure(url, error, "could not be reached");
+        }
+        try {
+            text = await response.text();
+        } catch (error) {
+            throw failure(url, error, "could not be read");
+        }
 
-    if (request?.accept === "text") {
-        return { ok: true, status: response.status, statusText: response.statusText, body: text };
-    }
+        if (!response.ok) {
+            // Carried through as text, because an error page is worth quoting and is rarely JSON.
+            return { ok: false, status: response.status, statusText: response.statusText, body: text };
+        }
 
-    try {
-        return { ok: true, status: response.status, statusText: response.statusText, body: JSON.parse(text) };
-    } catch (error) {
-        throw new Error(`${url} did not answer JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-};
+        if (request?.accept === "text") {
+            return { ok: true, status: response.status, statusText: response.statusText, body: text };
+        }
+
+        try {
+            return { ok: true, status: response.status, statusText: response.statusText, body: JSON.parse(text) };
+        } catch (error) {
+            throw new Error(`${url} did not answer JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
+    };
+}
 
 /**
  * One string field of an entry, or null when there is nothing usable there.
@@ -167,7 +195,8 @@ function describeBody(body: unknown): string {
  * @returns The client. Nothing is requested until something is asked for.
  */
 export function createTestmotorClient(options: TestmotorClientOptions): TestmotorClient {
-    const { baseUrl, fetch: transport = defaultFetch, cacheTtlMs = DEFAULT_CACHE_TTL_MS } = options;
+    const { baseUrl, cacheTtlMs = DEFAULT_CACHE_TTL_MS, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+    const transport = options.fetch ?? createDefaultFetch(timeoutMs);
     const cache = new Map<string, CacheEntry>();
 
     /**
