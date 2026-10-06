@@ -275,6 +275,14 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
 
     /** One predefined file, named by the header the testmotor tells its files apart by. */
     function getFile(path: string, fileName: string): Promise<string> {
+        // A header value is bytes, and fetch refuses a character above U+00FF before anything is sent, with an error that reads like the host was unreachable. No file on the testmotor has such a name today (checked 2026-10-06, all 535 are ASCII), so this only makes the failure say what it is.
+        if ([...fileName].some((character) => character.codePointAt(0)! > 0xff)) {
+            return Promise.reject(
+                new Error(
+                    `${path} (file ${fileName}) cannot be downloaded: the testmotor is asked for a file by a fileName header, and a header cannot carry this name.`
+                )
+            );
+        }
         return cached(`${path}\n${fileName}`, path, { headers: { fileName }, accept: "text" }, (url, body) => {
             if (typeof body !== "string") {
                 throw new Error(`${url} (file ${fileName}) did not answer the file as text.`);

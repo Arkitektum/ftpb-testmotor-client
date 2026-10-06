@@ -169,6 +169,33 @@ describe("fetchFormXml", () => {
 });
 
 describe("fetchSubformXml", () => {
+    it("refuses a file whose name a header cannot carry, naming the file, without asking for it", async () => {
+        const { calls, transport } = attachmentStub(
+            { "/api/attachment/disp-v1": [attachmentType("DispensasjonssoeknadDataV1", ["Dok – 1.xml"])] },
+            {}
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        await assert.rejects(
+            () => client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"),
+            /\(file Dok – 1\.xml\) cannot be downloaded: .*a header cannot carry this name/
+        );
+        assert.deepEqual(
+            calls.map((call) => call.fileName),
+            [undefined]
+        );
+    });
+
+    it("still asks for a file whose name is Latin-1, such as one with æ, ø or å", async () => {
+        const { transport } = attachmentStub(
+            { "/api/attachment/disp-v1": [attachmentType("DispensasjonssoeknadDataV1", ["Søknad.xml"])] },
+            { "/api/attachment/disp-v1/DispensasjonssoeknadDataV1/Søknad.xml": "<soeknad/>" }
+        );
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        assert.deepEqual(await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"), [{ name: "Søknad", contents: "<soeknad/>" }]);
+    });
+
     const LIST = "/api/attachment/disp-v1";
     const FILE = "/api/attachment/disp-v1/DispensasjonssoeknadDataV1";
 
