@@ -4,9 +4,9 @@ on:
     release:
         types: [created]
 
+# id-token for the OIDC exchange trusted publishing relies on. Nothing here writes packages to GitHub.
 permissions:
     contents: read
-    packages: write
     id-token: write
 
 jobs:
@@ -24,6 +24,18 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: "24"
+
+            # A release whose tag does not name the version in package.json would publish that version under the wrong
+            # release, or fail at the registry after everything else has run, so it stops here first.
+            - name: Check that the release tag matches package.json
+              env:
+                  TAG: ${{ github.event.release.tag_name }}
+              run: |
+                  version="v$(node -p "require('./package.json').version")"
+                  if [ "$TAG" != "$version" ]; then
+                    echo "::error::The release is tagged $TAG, but package.json says $version."
+                    exit 1
+                  fi
 
             - name: Enable Corepack and activate Yarn 4
               run: |
@@ -51,10 +63,11 @@ jobs:
               if: ${{ success() }}
               run: yarn build
 
-            # Trusted publishing needs npm >= 11.5.1 for the OIDC exchange.
+            # Trusted publishing needs npm >= 11.5.1 for the OIDC exchange. Held to major 11 rather than @latest, so a new npm
+            # major does not arrive unreviewed in the one job that can publish.
             - name: Ensure npm supports trusted publishing
               run: |
-                  npm install -g npm@latest
+                  npm install -g npm@11
                   npm --version
 
             # No NODE_AUTH_TOKEN: npm authenticates through OIDC as the trusted publisher configured on npmjs.com. Even an

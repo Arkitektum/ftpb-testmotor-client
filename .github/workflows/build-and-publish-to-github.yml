@@ -4,10 +4,10 @@ on:
     release:
         types: [created]
 
+# packages to publish with the workflow's own token. No OIDC exchange happens here, so no id-token.
 permissions:
     contents: read
     packages: write
-    id-token: write
 
 jobs:
     publish-github-package:
@@ -21,6 +21,18 @@ jobs:
                   node-version: "24"
                   registry-url: https://npm.pkg.github.com/
                   scope: "@arkitektum"
+
+            # A release whose tag does not name the version in package.json would publish that version under the wrong
+            # release, or fail at the registry after everything else has run, so it stops here first.
+            - name: Check that the release tag matches package.json
+              env:
+                  TAG: ${{ github.event.release.tag_name }}
+              run: |
+                  version="v$(node -p "require('./package.json').version")"
+                  if [ "$TAG" != "$version" ]; then
+                    echo "::error::The release is tagged $TAG, but package.json says $version."
+                    exit 1
+                  fi
 
             # Ensure Yarn v4 from packageManager is used
             - name: Enable Corepack and activate Yarn 4
