@@ -37,7 +37,7 @@
         "url": "https://github.com/Arkitektum/ftpb-testmotor-client/issues"
     },
     "homepage": "https://github.com/Arkitektum/ftpb-testmotor-client#readme",
-    "author": "",
+    "author": "Arkitektum AS",
     "license": "MIT",
     "devDependencies": {
         "@eslint/js": "^10.0.1",
