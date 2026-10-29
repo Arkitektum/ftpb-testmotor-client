@@ -105,6 +105,8 @@ The built-in transport gives up on a request after `timeoutMs`, thirty seconds b
 
 It also stops reading a body once it passes `maxBodyBytes`, 20 MB by default, and says the answer was too large to read. The timeout alone does not bound a body, since a testmotor that answers quickly can send hundreds of megabytes inside thirty seconds. A declared `Content-Length` over the limit is refused before anything is read. Set `maxBodyBytes: 0` to read whatever arrives. A transport passed as `fetch` ignores this option too.
 
+A subform's files are downloaded four at a time rather than all at once, and still answered in the order they are listed. A subform that lists more than 100 files is refused before any is downloaded: the whole testmotor held 535 files when this was written, so a list that long is a fault, and downloading it would be hundreds of requests for nothing. Unlike the two options above, both limits apply whichever transport is used.
+
 ## Development
 
 ```bash

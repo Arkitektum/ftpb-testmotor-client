@@ -226,6 +226,39 @@ function createDefaultFetch(timeoutMs: number, maxBodyBytes: number): TestmotorF
 }
 
 /**
+ * How many of one subform's files are downloaded at the same time.
+ *
+ * Each file is a request of its own, and a list of a few hundred would otherwise go out as one burst. Four keeps a handful of files about as quick as before.
+ */
+const SUBFORM_DOWNLOAD_CONCURRENCY = 4;
+
+/**
+ * The most files one subform may list before the list is refused rather than downloaded.
+ *
+ * The whole testmotor held 535 files when this was written, across every app and data type, and one subform holds a handful. A list far past that is a fault in the testmotor, and downloading it would be hundreds of requests for nothing.
+ */
+const MAX_SUBFORM_FILES = 100;
+
+/**
+ * Runs `task` for every item, no more than `limit` at a time, answering the results in the items' order.
+ *
+ * Fails as soon as one task fails, as `Promise.all` does.
+ */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next;
+            next += 1;
+            results[index] = await task(items[index]!);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
+
+/**
  * One string field of an entry, or null when there is nothing usable there.
  *
  * The entry is whatever was in the list, which is not necessarily an object: a list from the testmotor can carry a null, and has. Reaching into one of those for a field is the difference between dropping an unusable entry and failing the whole request.
@@ -395,7 +428,12 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
                 .filter((fileName): fileName is string => fileName !== null && /\.xml$/i.test(fileName));
 
             const filePath = `${appPath}/${encodeURIComponent(dataType)}`;
-            const contents = await Promise.all(fileNames.map((fileName) => getFile(filePath, fileName)));
+            if (fileNames.length > MAX_SUBFORM_FILES) {
+                throw new Error(
+                    `${filePath} lists ${fileNames.length} files, more than the ${MAX_SUBFORM_FILES} a subform is read with, so none were downloaded.`
+                );
+            }
+            const contents = await mapWithConcurrency(fileNames, SUBFORM_DOWNLOAD_CONCURRENCY, (fileName) => getFile(filePath, fileName));
             // A file with nothing in it has nothing to convert, as for the main forms. Any download that failed has already failed the whole call, naming its file.
             const files: TestmotorXmlFile[] = [];
             fileNames.forEach((fileName, index) => {

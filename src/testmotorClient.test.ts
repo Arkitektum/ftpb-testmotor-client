@@ -327,6 +327,63 @@ describe("fetchSubformXml", () => {
             ["/api/attachment/..%2Fxml", "/api/attachment/..%2Fxml/a%2Fb"]
         );
     });
+
+    it("downloads no more than four files at a time, and still answers them in the order they are listed", async () => {
+        const names = Array.from({ length: 10 }, (_, i) => `Fil${i}.xml`);
+        const { transport } = attachmentStub(
+            { [LIST]: [attachmentType("DispensasjonssoeknadDataV1", names)] },
+            Object.fromEntries(names.map((name) => [`${FILE}/${name}`, `<${name}/>`]))
+        );
+        let inFlight = 0;
+        let mostInFlight = 0;
+        // Later files answer sooner, so a client that kept the order downloads finished in would get it wrong.
+        const slowTransport: TestmotorFetch = async (url, request) => {
+            const fileName = request?.headers?.fileName;
+            if (fileName === undefined) return transport(url, request);
+            inFlight += 1;
+            mostInFlight = Math.max(mostInFlight, inFlight);
+            await new Promise((resolve) => setTimeout(resolve, 20 - names.indexOf(fileName)));
+            inFlight -= 1;
+            return transport(url, request);
+        };
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: slowTransport });
+
+        const files = await client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1");
+
+        assert.equal(mostInFlight, 4);
+        assert.deepEqual(
+            files.map((file) => file.name),
+            names.map((name) => name.replace(".xml", ""))
+        );
+    });
+
+    it("refuses a list of more files than any subform holds, without downloading one", async () => {
+        const names = Array.from({ length: 101 }, (_, i) => `Fil${i}.xml`);
+        const { calls, transport } = attachmentStub({ [LIST]: [attachmentType("DispensasjonssoeknadDataV1", names)] }, {});
+        const client = createTestmotorClient({ baseUrl: HOST, fetch: transport });
+
+        await assert.rejects(
+            () => client.fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1"),
+            /lists 101 files, more than the 100 a subform is read with/
+        );
+        assert.deepEqual(
+            calls.map((call) => call.fileName),
+            [undefined]
+        );
+    });
+
+    it("reads a list of exactly as many files as the limit", async () => {
+        const names = Array.from({ length: 100 }, (_, i) => `Fil${i}.xml`);
+        const { transport } = attachmentStub(
+            { [LIST]: [attachmentType("DispensasjonssoeknadDataV1", names)] },
+            Object.fromEntries(names.map((name) => [`${FILE}/${name}`, "<x/>"]))
+        );
+
+        assert.equal(
+            (await createTestmotorClient({ baseUrl: HOST, fetch: transport }).fetchSubformXml("disp-v1", "DispensasjonssoeknadDataV1")).length,
+            100
+        );
+    });
 });
 
 describe("reusing answers", () => {
