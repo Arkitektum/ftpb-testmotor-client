@@ -136,6 +136,8 @@ class BodyTooLargeError extends Error {}
  *
  * A declared `Content-Length` over the limit is refused before anything is read. Otherwise the body is read as it arrives and abandoned at the first chunk that takes it over, so an answer that never declared its length cannot fill memory either.
  *
+ * A stand-in for `Response` that has only `text()`, as a caller's tests may put in place of the global `fetch`, is read with that, as it was before this limit existed: it has no headers to check and no stream to count. Version 1.3.0 assumed both and broke such callers.
+ *
  * @param response - The response to read.
  * @param maxBytes - The limit. Zero or less reads the whole body.
  */
@@ -143,12 +145,13 @@ async function readBody(response: Response, maxBytes: number): Promise<string> {
     if (maxBytes <= 0) {
         return response.text();
     }
-    if (Number(response.headers.get("content-length")) > maxBytes) {
+    // Optional, for the stand-ins described above: typed as a Response, but not always one.
+    if (Number(response.headers?.get("content-length")) > maxBytes) {
         await response.body?.cancel();
         throw new BodyTooLargeError();
     }
-    if (!response.body) {
-        return "";
+    if (typeof response.body?.getReader !== "function") {
+        return response.text();
     }
     const reader = response.body.getReader();
     // Decoded as it arrives, with `stream` holding back a character split across two chunks until the rest of it comes.

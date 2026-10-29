@@ -663,6 +663,26 @@ describe("the built-in transport's timeout", () => {
 describe("the built-in transport's size limit", () => {
     const appsJson = JSON.stringify([{ appId: "fa-v5", mainFormId: "FA" }]);
 
+    // A caller's tests may put a plain object with only text() in place of the global fetch, as
+    // altinn-studio-custom-components-api's do. 1.2.2 read those, and 1.3.0 failed on the missing headers.
+    it("reads a stand-in for Response that has nothing but text()", async () => {
+        globalThis.fetch = (async () => ({ ok: true, status: 200, statusText: "OK", text: async () => appsJson })) as unknown as typeof fetch;
+
+        assert.deepEqual(await createTestmotorClient({ baseUrl: HOST }).fetchApps(), [{ appId: "fa-v5", mainFormId: "FA" }]);
+    });
+
+    it("reads a stand-in that has headers but no stream to count", async () => {
+        globalThis.fetch = (async () => ({
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: new Headers({ "content-type": "application/json" }),
+            text: async () => appsJson
+        })) as unknown as typeof fetch;
+
+        assert.deepEqual(await createTestmotorClient({ baseUrl: HOST }).fetchApps(), [{ appId: "fa-v5", mainFormId: "FA" }]);
+    });
+
     it("refuses a body whose declared length is over the limit, without reading it", async () => {
         let pulled = 0;
         globalThis.fetch = (async () =>
