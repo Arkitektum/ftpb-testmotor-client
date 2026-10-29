@@ -82,6 +82,12 @@ export interface TestmotorClientOptions {
      * Only the built-in transport reads this. A caller that supplies `fetch` keeps its own timeout, which is part of why it would supply one.
      */
     timeoutMs?: number;
+    /**
+     * The largest body, in bytes, the built-in transport reads before giving up. Zero reads whatever arrives.
+     *
+     * Only the built-in transport reads this, as for `timeoutMs`.
+     */
+    maxBodyBytes?: number;
 }
 
 export interface TestmotorClient {
@@ -115,6 +121,55 @@ export const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
  */
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * The largest body the built-in transport reads by default: 20 MB.
+ *
+ * The timeout alone does not bound a body. A testmotor that answers quickly can send hundreds of megabytes inside thirty seconds, and all of it would be held in memory. An app's example files, contents and all, come to well under a megabyte, so this leaves a wide margin.
+ */
+export const DEFAULT_MAX_BODY_BYTES = 20 * 1024 * 1024;
+
+/** Thrown by `readBody` when a body passes the limit, so the transport can say so rather than call it unreadable. */
+class BodyTooLargeError extends Error {}
+
+/**
+ * Reads a response body as text, giving up as soon as it passes `maxBytes`.
+ *
+ * A declared `Content-Length` over the limit is refused before anything is read. Otherwise the body is read as it arrives and abandoned at the first chunk that takes it over, so an answer that never declared its length cannot fill memory either.
+ *
+ * @param response - The response to read.
+ * @param maxBytes - The limit. Zero or less reads the whole body.
+ */
+async function readBody(response: Response, maxBytes: number): Promise<string> {
+    if (maxBytes <= 0) {
+        return response.text();
+    }
+    if (Number(response.headers.get("content-length")) > maxBytes) {
+        await response.body?.cancel();
+        throw new BodyTooLargeError();
+    }
+    if (!response.body) {
+        return "";
+    }
+    const reader = response.body.getReader();
+    // Decoded as it arrives, with `stream` holding back a character split across two chunks until the rest of it comes.
+    const decoder = new TextDecoder();
+    let text = "";
+    let size = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+            break;
+        }
+        size += value.byteLength;
+        if (size > maxBytes) {
+            await reader.cancel();
+            throw new BodyTooLargeError();
+        }
+        text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+}
+
 interface CacheEntry {
     at: number;
     value: Promise<unknown>;
@@ -127,8 +182,9 @@ interface CacheEntry {
  * Every failure names the URL that failed. Callers surface these messages to people who need "could not be reached" to read differently from "holds nothing for this app", and a bare `fetch failed` does not say which host was unreachable. A timeout says so in as many words, since the abort itself reads only "The operation was aborted due to timeout".
  *
  * @param timeoutMs - How long one request may take, body included. Zero for no limit of its own.
+ * @param maxBodyBytes - The largest body read before giving up. Zero for no limit.
  */
-function createDefaultFetch(timeoutMs: number): TestmotorFetch {
+function createDefaultFetch(timeoutMs: number, maxBodyBytes: number): TestmotorFetch {
     const failure = (url: string, error: unknown, what: string) =>
         error instanceof Error && error.name === "TimeoutError"
             ? new Error(`${url} did not answer within ${timeoutMs} ms`, { cause: error })
@@ -144,8 +200,11 @@ function createDefaultFetch(timeoutMs: number): TestmotorFetch {
             throw failure(url, error, "could not be reached");
         }
         try {
-            text = await response.text();
+            text = await readBody(response, maxBodyBytes);
         } catch (error) {
+            if (error instanceof BodyTooLargeError) {
+                throw new Error(`${url} answered more than ${maxBodyBytes} bytes, so the answer was not read`, { cause: error });
+            }
             throw failure(url, error, "could not be read");
         }
 
@@ -195,8 +254,8 @@ function describeBody(body: unknown): string {
  * @returns The client. Nothing is requested until something is asked for.
  */
 export function createTestmotorClient(options: TestmotorClientOptions): TestmotorClient {
-    const { baseUrl, cacheTtlMs = DEFAULT_CACHE_TTL_MS, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
-    const transport = options.fetch ?? createDefaultFetch(timeoutMs);
+    const { baseUrl, cacheTtlMs = DEFAULT_CACHE_TTL_MS, timeoutMs = DEFAULT_TIMEOUT_MS, maxBodyBytes = DEFAULT_MAX_BODY_BYTES } = options;
+    const transport = options.fetch ?? createDefaultFetch(timeoutMs, maxBodyBytes);
     const cache = new Map<string, CacheEntry>();
 
     /**

@@ -1,4 +1,4 @@
-import { DEFAULT_TIMEOUT_MS, createTestmotorClient } from "./testmotorClient.ts";
+import { DEFAULT_MAX_BODY_BYTES, DEFAULT_TIMEOUT_MS, createTestmotorClient } from "./testmotorClient.ts";
 import type { TestmotorFetch, TestmotorHttpResponse, TestmotorRequest } from "./testmotorClient.ts";
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -600,6 +600,91 @@ describe("the built-in transport's timeout", () => {
         await createTestmotorClient({ baseUrl: HOST, timeoutMs: 0 }).fetchApps();
 
         assert.deepEqual(signals, [undefined]);
+    });
+});
+
+describe("the built-in transport's size limit", () => {
+    const appsJson = JSON.stringify([{ appId: "fa-v5", mainFormId: "FA" }]);
+
+    it("refuses a body whose declared length is over the limit, without reading it", async () => {
+        let pulled = 0;
+        globalThis.fetch = (async () =>
+            new Response(
+                new ReadableStream({
+                    pull(controller) {
+                        pulled += 1;
+                        controller.enqueue(new TextEncoder().encode("[]"));
+                        controller.close();
+                    }
+                }),
+                { status: 200, headers: { "content-length": "1000" } }
+            )) as typeof fetch;
+        const client = createTestmotorClient({ baseUrl: HOST, maxBodyBytes: 999 });
+
+        await assert.rejects(() => client.fetchApps(), /api\/altinn-app answered more than 999 bytes, so the answer was not read/);
+        assert.ok(pulled <= 1, "nothing past the first chunk the stream offers by itself should be asked for");
+    });
+
+    it("gives up on a body that never says how long it is, as soon as it passes the limit", async () => {
+        let cancelled = false;
+        let chunks = 0;
+        globalThis.fetch = (async () =>
+            new Response(
+                new ReadableStream({
+                    pull(controller) {
+                        chunks += 1;
+                        controller.enqueue(new Uint8Array(100));
+                    },
+                    cancel() {
+                        cancelled = true;
+                    }
+                }),
+                { status: 200 }
+            )) as typeof fetch;
+        const client = createTestmotorClient({ baseUrl: HOST, maxBodyBytes: 1000 });
+
+        await assert.rejects(() => client.fetchApps(), /answered more than 1000 bytes/);
+        assert.equal(cancelled, true, "the rest of the body should be cancelled, not left to arrive");
+        assert.ok(chunks < 20, `read ${chunks} chunks of 100 bytes past a limit of 1000`);
+    });
+
+    it("reads a body exactly as long as the limit", async () => {
+        globalThis.fetch = (async () => new Response(appsJson, { status: 200 })) as typeof fetch;
+        const client = createTestmotorClient({ baseUrl: HOST, maxBodyBytes: new TextEncoder().encode(appsJson).byteLength });
+
+        assert.deepEqual(await client.fetchApps(), [{ appId: "fa-v5", mainFormId: "FA" }]);
+    });
+
+    it("keeps a character whose bytes arrive in two chunks", async () => {
+        const bytes = new TextEncoder().encode(JSON.stringify([{ appId: "føre-v1", mainFormId: "FØ" }]));
+        const split = bytes.indexOf(0xc3) + 1; // between the two bytes of the first ø
+        globalThis.fetch = (async () =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(bytes.slice(0, split));
+                        controller.enqueue(bytes.slice(split));
+                        controller.close();
+                    }
+                }),
+                { status: 200 }
+            )) as typeof fetch;
+
+        assert.deepEqual(await createTestmotorClient({ baseUrl: HOST }).fetchApps(), [{ appId: "føre-v1", mainFormId: "FØ" }]);
+    });
+
+    it("has a limit by default", async () => {
+        globalThis.fetch = (async () =>
+            new Response("[]", { status: 200, headers: { "content-length": String(DEFAULT_MAX_BODY_BYTES + 1) } })) as typeof fetch;
+
+        assert.equal(DEFAULT_MAX_BODY_BYTES, 20 * 1024 * 1024);
+        await assert.rejects(() => createTestmotorClient({ baseUrl: HOST }).fetchApps(), /answered more than 20971520 bytes/);
+    });
+
+    it("reads whatever arrives for a limit of zero", async () => {
+        globalThis.fetch = (async () => new Response(appsJson, { status: 200, headers: { "content-length": "999999999" } })) as typeof fetch;
+
+        assert.deepEqual(await createTestmotorClient({ baseUrl: HOST, maxBodyBytes: 0 }).fetchApps(), [{ appId: "fa-v5", mainFormId: "FA" }]);
     });
 });
 
