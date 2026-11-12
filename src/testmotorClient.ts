@@ -11,8 +11,6 @@
  *     GET {baseUrl}/api/attachment/{appId}/{dataType}     one predefined file, named by a `fileName` request header, answered as the file itself
  *
  * Subforms are attachments as far as the testmotor is concerned, filed under the subform's data type. The download endpoint needs the `fileName` header: without it the testmotor answers 500 with a misleading complaint about a missing folder, and with a name it does not hold it answers 404 naming the data type rather than the file.
- *
- * There is a third, `GET /api/altinn-app/{appId}`, which answers the same files alongside parties, metadata and attachments. It is deliberately not used, because it makes Altinn calls that no caller here has a use for.
  */
 
 /** An app the testmotor holds example data for. */
@@ -136,7 +134,7 @@ class BodyTooLargeError extends Error {}
  *
  * A declared `Content-Length` over the limit is refused before anything is read. Otherwise the body is read as it arrives and abandoned at the first chunk that takes it over, so an answer that never declared its length cannot fill memory either.
  *
- * A stand-in for `Response` that has only `text()`, as a caller's tests may put in place of the global `fetch`, is read with that, as it was before this limit existed: it has no headers to check and no stream to count. Version 1.3.0 assumed both and broke such callers.
+ * A stand-in for `Response` that has only `text()`, as a caller's tests may put in place of the global `fetch`, is read with that: it has no headers to check and no stream to count.
  *
  * @param response - The response to read.
  * @param maxBytes - The limit. Zero or less reads the whole body.
@@ -231,7 +229,7 @@ function createDefaultFetch(timeoutMs: number, maxBodyBytes: number): TestmotorF
 /**
  * How many of one subform's files are downloaded at the same time.
  *
- * Each file is a request of its own, and a list of a few hundred would otherwise go out as one burst. Four keeps a handful of files about as quick as before.
+ * Each file is a request of its own, and a list of a few hundred would otherwise go out as one burst. Four keeps a handful of files quick without sending them all at once.
  */
 const SUBFORM_DOWNLOAD_CONCURRENCY = 4;
 
@@ -297,7 +295,7 @@ export function createTestmotorClient(options: TestmotorClientOptions): Testmoto
     /**
      * The base URL as it stands, with any trailing slash removed so paths append cleanly.
      *
-     * The slashes are counted off rather than matched with a pattern like `/\/+$/`. That pattern backtracks through a long run of slashes once for every position it could have started at, so the time it takes grows with the square of the run: a value of forty thousand slashes takes over half a second, and twice that takes four times as long. The base URL is configuration rather than anything a request carries, so this is not an opening for anyone, but a published library should not hand a caller a sharp edge that a value from somewhere less trusted could run into.
+     * The slashes are counted off one by one, since a pattern such as `/\/+$/` takes time that grows with the square of a long run of slashes.
      */
     function currentBaseUrl(): string {
         const trimmed = ((typeof baseUrl === "function" ? baseUrl() : baseUrl) ?? "").trim();

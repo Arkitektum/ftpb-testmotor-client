@@ -43,8 +43,7 @@ jobs:
 
             # ESLint exits 1 when it found problems, which is a successful scan and has to reach the upload below, and 2 when
             # it could not run at all: a config it cannot load, a formatter it cannot resolve. Only the second is a failure
-            # of this workflow, and it says so with whatever ESLint printed rather than swallowing it, which is how this
-            # step came to be scanning nothing without anyone noticing.
+            # of this workflow, and it says so with whatever ESLint printed rather than swallowing it.
             - name: Run ESLint
               env:
                   SARIF_ESLINT_IGNORE_SUPPRESSED: "true"
